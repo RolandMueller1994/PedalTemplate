@@ -37,50 +37,72 @@
 #define LOOP_DELAY 1
 // Switch debounce delay in ms
 #define DEBOUNCE_DELAY 5
+#define LONG_DELAY 250
 // Number of switches
 #define NO_SWITCHES 2
 
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
 UART_HandleTypeDef huart2;
+
+/* USER CODE BEGIN PV */
 
 // Array to store switches state change flags
 bool swEdgesPush[NO_SWITCHES];
 bool swEdgesRelease[NO_SWITCHES];
+
 // Array to store switches states
 bool swStates[NO_SWITCHES];
+bool swLongState[NO_SWITCHES];
+bool swLongRelease[NO_SWITCHES];
 
 // Array for debounce counters and flags
 uint8_t swCount[NO_SWITCHES];
 bool swDoCount[NO_SWITCHES];
+uint16_t swLongCount[NO_SWITCHES];
 
 // Array stating the GPIOs used for switches
-GPIO_TypeDef* switchBank[NO_SWITCHES] = {GPIOA, GPIOB};
-uint16_t switches[NO_SWITCHES] = {SW_Pin, ExtSW_Pin};
+GPIO_TypeDef *switchBank[NO_SWITCHES] = { GPIOA, GPIOB };
+uint16_t switches[NO_SWITCHES] = { SW_Pin, ExtSW_Pin };
 
 // Array stating which switches are latched and which are momentary switches
 // false 	-> momentary
 // true 	-> latched
-bool swLatches[NO_SWITCHES] = {false, true};
+bool swLatches[NO_SWITCHES] = { false, true };
 
 // Effect on flag
 bool effectOn = false;
 
+/* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
+/* USER CODE BEGIN PFP */
 
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
 
 void readSwitches() {
 
-	for(int i=0; i<NO_SWITCHES; i++) {
+	for (int i = 0; i < NO_SWITCHES; i++) {
 		GPIO_PinState pinState = HAL_GPIO_ReadPin(switchBank[i], switches[i]);
 
 		swEdgesPush[i] = false;
 		swEdgesRelease[i] = false;
+		swLongRelease[i] = false;
 
 		// Switches are active low
-		if(pinState == GPIO_PIN_SET && swStates[i]) {
+		if (pinState == GPIO_PIN_SET && swStates[i]) {
 			// Switch open
 			if (!swDoCount[i]) {
 				// Start debounce
@@ -97,13 +119,13 @@ void readSwitches() {
 					swCount[i]++;
 				}
 			}
-		} else if (pinState == GPIO_PIN_RESET && !swStates[i]){
+		} else if (pinState == GPIO_PIN_RESET && !swStates[i]) {
 			// Switch closed
-			if(!swDoCount[i]) {
+			if (!swDoCount[i]) {
 				// Start debounce
 				swDoCount[i] = true;
 			} else {
-				if(swCount[i] == DEBOUNCE_DELAY) {
+				if (swCount[i] == DEBOUNCE_DELAY) {
 					swEdgesPush[i] = true;
 					swCount[i]++;
 				} else if (swCount[i] == DEBOUNCE_DELAY + 1) {
@@ -118,24 +140,41 @@ void readSwitches() {
 			swDoCount[i] = false;
 			swCount[i] = 0;
 		}
+
+		if (swStates[i] && !swLatches[i]) {
+			if (swLongCount[i] < LONG_DELAY) {
+				swLongCount[i]++;
+			} else if (swLongCount[i] == LONG_DELAY) {
+				swLongState[i] = true;
+				swLongCount[i]++;
+			}
+		} else if (!swLatches[i]) {
+			if (swLongState[i]) {
+				swLongRelease[i] = true;
+			}
+			swLongState[i] = false;
+			swLongCount[i] = 0;
+		}
 	}
 }
 
 void updateState() {
 
-	for(int i=0; i<NO_SWITCHES; i++) {
-		if((switches[i] == SW_Pin) && swEdgesPush[i]) {
+	for (int i = 0; i < NO_SWITCHES; i++) {
+		if ((switches[i] == SW_Pin) && swEdgesPush[i]) {
 			effectOn = !effectOn;
-		} else if(switches[i] == ExtSW_Pin) {
-			if(swEdgesPush[i])
+		} else if ((switches[i] == SW_Pin) && swLongRelease[i] && effectOn) {
+			effectOn = false;
+		} else if (switches[i] == ExtSW_Pin) {
+			if (swEdgesPush[i])
 				effectOn = true;
-			else if(swEdgesRelease[i])
+			else if (swEdgesRelease[i])
 				effectOn = false;
 		}
 	}
-
 }
 
+/* USER CODE END 0 */
 
 /**
  * @brief  The application entry point.
@@ -143,36 +182,60 @@ void updateState() {
  */
 int main(void) {
 
+	/* USER CODE BEGIN 1 */
+
+	/* USER CODE END 1 */
+
 	/* MCU Configuration--------------------------------------------------------*/
 
 	/* Reset of all peripherals, Initializes the Flash interface and the Systick. */
 	HAL_Init();
 
+	/* USER CODE BEGIN Init */
+
+	/* USER CODE END Init */
+
 	/* Configure the system clock */
 	SystemClock_Config();
+
+	/* USER CODE BEGIN SysInit */
+
+	for (int i = 0; i < NO_SWITCHES; i++) {
+		swEdgesPush[i] = false;
+		swEdgesRelease[i] = false;
+		swStates[i] = false;
+		swLongState[i] = false;
+		swLongRelease[i] = false;
+		swCount[i] = 0;
+		swLongCount[i] = 0;
+		swDoCount[i] = false;
+	}
+
+	/* USER CODE END SysInit */
 
 	/* Initialize all configured peripherals */
 	MX_GPIO_Init();
 	MX_USART2_UART_Init();
+	/* USER CODE BEGIN 2 */
 
-	for(int i=0; i<NO_SWITCHES; i++) {
-		swEdgesPush[i] = false;
-		swEdgesRelease[i] = false;
-		swStates[i] = false;
-		swCount[i] = 0;
-		swDoCount[i] = false;
-	}
+	/* USER CODE END 2 */
 
 	/* Infinite loop */
+	/* USER CODE BEGIN WHILE */
 	while (1) {
 		readSwitches();
 		updateState();
 
-		HAL_GPIO_WritePin(GPIOB, Relay_Pin | LED_Pin, effectOn ? GPIO_PIN_SET : GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(GPIOB, Relay_Pin | LED_Pin,
+				effectOn ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
 		HAL_Delay(LOOP_DELAY);
-	}
 
+		/* USER CODE END WHILE */
+
+		/* USER CODE BEGIN 3 */
+	}
+	/* USER CODE END 3 */
 }
 
 /**

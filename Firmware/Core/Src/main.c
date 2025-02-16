@@ -40,11 +40,14 @@
 #define DEBOUNCE_DELAY 5
 #define LONG_DELAY 250
 // Number of switches
-#define NO_SWITCHES 2
+#define NO_SWITCHES 3
 
 // MIDI
-#define MIDI_CHANNEL 3
-#define MIDI_CONTROL 10
+#define MIDI_CHANNEL 1
+#define MIDI_CONTROL 20
+
+// Flash
+#define FLASH_START_ADDR 0x0800FC00
 
 /* USER CODE END PD */
 
@@ -73,16 +76,19 @@ bool swDoCount[NO_SWITCHES];
 uint16_t swLongCount[NO_SWITCHES];
 
 // Array stating the GPIOs used for switches
-GPIO_TypeDef *switchBank[NO_SWITCHES] = { GPIOA, GPIOB };
-uint16_t switches[NO_SWITCHES] = { SW_Pin, ExtSW_Pin };
+GPIO_TypeDef *switchBank[NO_SWITCHES] = { GPIOA, GPIOB, GPIOC };
+uint16_t switches[NO_SWITCHES] = { SW_Pin, ExtSW_Pin, InConn_Pin };
 
 // Array stating which switches are latched and which are momentary switches
 // false 	-> momentary
 // true 	-> latched
-bool swLatches[NO_SWITCHES] = { false, true };
+bool swLatches[NO_SWITCHES] = { false, true, true };
 
 // Effect on flag
 bool effectOn = false;
+
+// Midi Learn
+bool midiLearn = false;
 
 // Midi
 struct midiMsg msg;
@@ -167,19 +173,59 @@ void readSwitches() {
 }
 
 void updateState() {
-
+	bool swLong = false;
+	bool swPushEdge = false;
+	bool inConn = false;
 	for (int i = 0; i < NO_SWITCHES; i++) {
 		if ((switches[i] == SW_Pin) && swEdgesPush[i]) {
-			effectOn = !effectOn;
+			if (!midiLearn)
+				effectOn = !effectOn;
+			swPushEdge = true;
 		} else if ((switches[i] == SW_Pin) && swLongRelease[i] && effectOn) {
+			if (!midiLearn)
 			effectOn = false;
-		} else if (switches[i] == ExtSW_Pin) {
+		} else if (switches[i] == ExtSW_Pin && !effectOn) {
 			if (swEdgesPush[i])
 				effectOn = true;
 			else if (swEdgesRelease[i])
 				effectOn = false;
 		}
+
+		if (!midiLearn) {
+			if (switches[i] == SW_Pin && swLongState[i])
+				swLong = true;
+			else if (switches[i] == InConn_Pin && swStates[i])
+				inConn = true;
+		}
 	}
+
+	if (swLong && inConn) {
+		midiLearn = true;
+		effectOn = false;
+	} else if (midiLearn && swPushEdge) {
+		midiLearn = false;
+	}
+}
+
+void saveChannelControlFlash(uint8_t channel, uint8_t control) {
+	HAL_FLASH_Unlock();
+	FLASH_EraseInitTypeDef EraseInitStruct;
+	EraseInitStruct.TypeErase = FLASH_TYPEERASE_PAGES;
+	EraseInitStruct.PageAddress = FLASH_START_ADDR;
+	EraseInitStruct.NbPages = 1;
+
+	uint32_t PageError;
+	if (HAL_FLASHEx_Erase(&EraseInitStruct, &PageError) != HAL_OK) //Erase the Page Before a Write Operation
+		return;
+
+	HAL_Delay(50);
+	HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, FLASH_START_ADDR,
+			(uint64_t) channel);
+	HAL_Delay(50);
+	HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, FLASH_START_ADDR + 0x4,
+			(uint64_t) control);
+	HAL_Delay(50);
+	HAL_FLASH_Lock();
 }
 
 /* USER CODE END 0 */
@@ -228,28 +274,70 @@ int main(void) {
 	MX_USART2_UART_Init();
 	/* USER CODE BEGIN 2 */
 
+	bool reset = true;
+
+	for (int i = 0; i < 20; i++) {
+		if (HAL_GPIO_ReadPin(GPIOA, SW_Pin) == GPIO_PIN_SET) {
+			reset = false;
+			break;
+		}
+		HAL_Delay(100);
+	}
+
+	uint8_t channel, control;
+	if (reset) {
+		saveChannelControlFlash(MIDI_CHANNEL, MIDI_CONTROL);
+		for (int i = 0; i < 4; i++) {
+			HAL_GPIO_WritePin(GPIOB, LED_Pin,
+					i % 2 == 0 ? GPIO_PIN_SET : GPIO_PIN_RESET);
+			HAL_Delay(250);
+		}
+		channel = MIDI_CHANNEL;
+		control = MIDI_CONTROL;
+		HAL_Delay(3000);
+	} else {
+		channel = (uint8_t) *(__IO uint32_t*) FLASH_START_ADDR;
+		control = (uint8_t) *(__IO uint32_t*) (FLASH_START_ADDR + 0x4);
+	}
+
 	HAL_UARTEx_ReceiveToIdle_IT(&huart2, midiMessageReceived(), 3);
 
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
+	int loopCount = 0;
 	while (1) {
 		readSwitches();
 		updateState();
 
-		HAL_GPIO_WritePin(GPIOB, Relay_Pin | LED_Pin,
-				effectOn ? GPIO_PIN_SET : GPIO_PIN_RESET);
-
-		HAL_Delay(LOOP_DELAY);
+		HAL_GPIO_WritePin(GPIOB, Relay_Pin,
+				effectOn & !midiLearn ? GPIO_PIN_SET : GPIO_PIN_RESET);
+		if (midiLearn && loopCount == (500 / LOOP_DELAY)) {
+			HAL_GPIO_TogglePin(GPIOB, LED_Pin);
+			loopCount = 0;
+		} else if (!midiLearn){
+			HAL_GPIO_WritePin(GPIOB, LED_Pin,
+					effectOn ? GPIO_PIN_SET : GPIO_PIN_RESET);
+		}
 
 		do {
 			midiGetMessage(&msg);
-			if (msg.msgType == MIDI_CC && msg.channel == MIDI_CHANNEL
-					&& msg.val1 == MIDI_CONTROL) {
-				effectOn = msg.val2 > 63;
+			if (midiLearn) {
+				loopCount += 1;
+				if (msg.msgType == MIDI_CC) {
+					channel = msg.channel;
+					control = msg.val1;
+					saveChannelControlFlash(channel, control);
+					midiLearn = false;
+				}
+			} else if (msg.msgType == MIDI_CC) {
+				if (msg.channel == channel && msg.val1 == control)
+					effectOn = msg.val2 > 63;
 			}
 		} while (msg.msgType != MIDI_NA);
+
+		HAL_Delay(LOOP_DELAY);
 
 		/* USER CODE END WHILE */
 

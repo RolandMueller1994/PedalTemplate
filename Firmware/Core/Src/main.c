@@ -43,7 +43,8 @@
 UART_HandleTypeDef huart2;
 
 // Array to store switches state change flags
-bool swEdges[NO_SWITCHES];
+bool swEdgesPush[NO_SWITCHES];
+bool swEdgesRelease[NO_SWITCHES];
 // Array to store switches states
 bool swStates[NO_SWITCHES];
 
@@ -74,29 +75,48 @@ void readSwitches() {
 
 	for(int i=0; i<NO_SWITCHES; i++) {
 		GPIO_PinState pinState = HAL_GPIO_ReadPin(switchBank[i], switches[i]);
-		swEdges[i] = false;
-		swStates[i] = false;
-		// Switches are active high
-		if(pinState == GPIO_PIN_SET) {
+
+		swEdgesPush[i] = false;
+		swEdgesRelease[i] = false;
+
+		// Switches are active low
+		if(pinState == GPIO_PIN_SET && swStates[i]) {
 			// Switch open
-			swCount[i] = 0;
-			swDoCount[i] = false;
-		} else {
+			if (!swDoCount[i]) {
+				// Start debounce
+				swDoCount[i] = true;
+			} else {
+				if (swCount[i] == DEBOUNCE_DELAY) {
+					swEdgesRelease[i] = true;
+					swCount[i]++;
+				} else if (swCount[i] == DEBOUNCE_DELAY + 1) {
+					swDoCount[i] = false;
+					swStates[i] = false;
+					swCount[i] = 0;
+				} else {
+					swCount[i]++;
+				}
+			}
+		} else if (pinState == GPIO_PIN_RESET && !swStates[i]){
 			// Switch closed
 			if(!swDoCount[i]) {
 				// Start debounce
 				swDoCount[i] = true;
 			} else {
 				if(swCount[i] == DEBOUNCE_DELAY) {
-					swEdges[i] = true;
-					swStates[i] = true;
+					swEdgesPush[i] = true;
 					swCount[i]++;
 				} else if (swCount[i] == DEBOUNCE_DELAY + 1) {
+					swDoCount[i] = false;
 					swStates[i] = true;
+					swCount[i] = 0;
 				} else {
 					swCount[i]++;
 				}
 			}
+		} else {
+			swDoCount[i] = false;
+			swCount[i] = 0;
 		}
 	}
 }
@@ -104,11 +124,14 @@ void readSwitches() {
 void updateState() {
 
 	for(int i=0; i<NO_SWITCHES; i++) {
-		if((switches[i] == SW_Pin) && swEdges[i]) {
+		if((switches[i] == SW_Pin) && swEdgesPush[i]) {
 			effectOn = !effectOn;
-		}/* else if(switches[i] == ExtSW_Pin && swState[i]) {
-			effectOn = true;
-		}*/
+		} else if(switches[i] == ExtSW_Pin) {
+			if(swEdgesPush[i])
+				effectOn = true;
+			else if(swEdgesRelease[i])
+				effectOn = false;
+		}
 	}
 
 }
@@ -133,7 +156,8 @@ int main(void) {
 	MX_USART2_UART_Init();
 
 	for(int i=0; i<NO_SWITCHES; i++) {
-		swEdges[i] = false;
+		swEdgesPush[i] = false;
+		swEdgesRelease[i] = false;
 		swStates[i] = false;
 		swCount[i] = 0;
 		swDoCount[i] = false;

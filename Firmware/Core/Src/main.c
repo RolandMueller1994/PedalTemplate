@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "midi.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -40,6 +41,10 @@
 #define LONG_DELAY 250
 // Number of switches
 #define NO_SWITCHES 2
+
+// MIDI
+#define MIDI_CHANNEL 3
+#define MIDI_CONTROL 10
 
 /* USER CODE END PD */
 
@@ -78,6 +83,9 @@ bool swLatches[NO_SWITCHES] = { false, true };
 
 // Effect on flag
 bool effectOn = false;
+
+// Midi
+struct midiMsg msg;
 
 /* USER CODE END PV */
 
@@ -211,12 +219,16 @@ int main(void) {
 		swDoCount[i] = false;
 	}
 
+	midiInit();
+
 	/* USER CODE END SysInit */
 
 	/* Initialize all configured peripherals */
 	MX_GPIO_Init();
 	MX_USART2_UART_Init();
 	/* USER CODE BEGIN 2 */
+
+	HAL_UART_Receive_IT(&huart2, midiMessageReceived(), 3);
 
 	/* USER CODE END 2 */
 
@@ -230,6 +242,13 @@ int main(void) {
 				effectOn ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
 		HAL_Delay(LOOP_DELAY);
+
+		do {
+			midiGetMessage(&msg);
+			if (msg.msgType == MIDI_CC && msg.channel == MIDI_CHANNEL && msg.val1 == MIDI_CONTROL) {
+				effectOn = msg.val2 > 63;
+			}
+		} while (msg.msgType != MIDI_NA);
 
 		/* USER CODE END WHILE */
 
@@ -363,6 +382,11 @@ static void MX_GPIO_Init(void) {
 }
 
 /* USER CODE BEGIN 4 */
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+  HAL_UART_Receive_IT(&huart2, midiMessageReceived(), 3); //You need to toggle a breakpoint on this line!
+}
 
 /* USER CODE END 4 */
 

@@ -1,3 +1,9 @@
+# Launch files
+*.launch
+
+# Debug build
+*/Debug/*
+
 # Object files
 *.o
 *.ko

@@ -228,7 +228,7 @@ int main(void) {
 	MX_USART2_UART_Init();
 	/* USER CODE BEGIN 2 */
 
-	HAL_UART_Receive_IT(&huart2, midiMessageReceived(), 3);
+	HAL_UARTEx_ReceiveToIdle_IT(&huart2, midiMessageReceived(), 3);
 
 	/* USER CODE END 2 */
 
@@ -245,7 +245,8 @@ int main(void) {
 
 		do {
 			midiGetMessage(&msg);
-			if (msg.msgType == MIDI_CC && msg.channel == MIDI_CHANNEL && msg.val1 == MIDI_CONTROL) {
+			if (msg.msgType == MIDI_CC && msg.channel == MIDI_CHANNEL
+					&& msg.val1 == MIDI_CONTROL) {
 				effectOn = msg.val2 > 63;
 			}
 		} while (msg.msgType != MIDI_NA);
@@ -383,9 +384,8 @@ static void MX_GPIO_Init(void) {
 
 /* USER CODE BEGIN 4 */
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
-  HAL_UART_Receive_IT(&huart2, midiMessageReceived(), 3); //You need to toggle a breakpoint on this line!
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size) {
+	HAL_UARTEx_ReceiveToIdle_IT(&huart2, midiMessageReceived(), 3); //You need to toggle a breakpoint on this line!
 }
 
 /* USER CODE END 4 */

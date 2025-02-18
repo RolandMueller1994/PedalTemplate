@@ -43,7 +43,7 @@
 #define NO_SWITCHES 3
 
 // MIDI
-#define MIDI_CHANNEL 1
+#define MIDI_CHANNEL 0
 #define MIDI_CONTROL 20
 
 // Flash
@@ -299,14 +299,18 @@ int main(void) {
 	uint8_t channel, control;
 	if (reset) {
 		saveChannelControlFlash(MIDI_CHANNEL, MIDI_CONTROL);
-		for (int i = 0; i < 4; i++) {
+		uint16_t blinkCount = 0;
+		for (uint8_t i = 0; i < 4; ) {
 			HAL_GPIO_WritePin(GPIOB, LED_Pin,
-					i % 2 == 0 ? GPIO_PIN_SET : GPIO_PIN_RESET);
+					blinkCount % 2 == 0 ? GPIO_PIN_SET : GPIO_PIN_RESET);
 			HAL_Delay(250);
+			// Wait till main switch is release to not get into midi learn immediately
+			if (HAL_GPIO_ReadPin(GPIOA, SW_Pin) == GPIO_PIN_SET)
+				i++;
+			blinkCount++;
 		}
 		channel = MIDI_CHANNEL;
 		control = MIDI_CONTROL;
-		HAL_Delay(3000);
 	} else {
 		channel = (uint8_t) *(__IO uint32_t*) FLASH_START_ADDR;
 		control = (uint8_t) *(__IO uint32_t*) (FLASH_START_ADDR + 0x4);
@@ -346,6 +350,7 @@ int main(void) {
 					control = msg.val1;
 					saveChannelControlFlash(channel, control);
 					midiLearn = false;
+					loopCount = 0;
 				}
 			} else if (msg.msgType == MIDI_CC) {
 				if (msg.channel == channel && msg.val1 == control)

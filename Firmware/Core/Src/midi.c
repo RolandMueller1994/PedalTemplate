@@ -50,3 +50,7 @@ uint8_t* midiMessageReceived() {
 	return retVal;
 }
 
+uint8_t* midiGetCurrentBuffer() {
+	return midiRingBuffer[writePointer];
+}
+

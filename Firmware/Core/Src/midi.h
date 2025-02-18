@@ -10,7 +10,7 @@
 
 #include "stm32f0xx_hal.h"
 
-#define MIDI_H_RING_BUFFER_LENGTH 32
+#define MIDI_H_RING_BUFFER_LENGTH 256
 #define MIDI_H_PACKAGE_SIZE 10
 
 #define MIDI_NA 0
@@ -29,5 +29,7 @@ void midiInit();
 void midiGetMessage(struct midiMsg* msg);
 
 uint8_t* midiMessageReceived();
+uint8_t* midiGetCurrentBuffer();
+
 
 #endif /* SRC_MIDI_H_ */

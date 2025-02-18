@@ -92,6 +92,7 @@ bool midiLearn = false;
 
 // Midi
 struct midiMsg msg;
+bool uartError = false;
 
 /* USER CODE END PV */
 
@@ -215,17 +216,28 @@ void saveChannelControlFlash(uint8_t channel, uint8_t control) {
 	EraseInitStruct.NbPages = 1;
 
 	uint32_t PageError;
-	if (HAL_FLASHEx_Erase(&EraseInitStruct, &PageError) != HAL_OK) //Erase the Page Before a Write Operation
+	if (HAL_FLASHEx_Erase(&EraseInitStruct, &PageError) != HAL_OK) { //Erase the Page Before a Write Operation
+		HAL_FLASH_Lock();
 		return;
+	}
 
 	HAL_Delay(50);
 	HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, FLASH_START_ADDR,
 			(uint64_t) channel);
 	HAL_Delay(50);
-	HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, FLASH_START_ADDR + 0x4,
+	HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, FLASH_START_ADDR + 4,
 			(uint64_t) control);
 	HAL_Delay(50);
 	HAL_FLASH_Lock();
+}
+
+void startUartInterrupts(uint8_t* buffer) {
+	HAL_StatusTypeDef status = HAL_UARTEx_ReceiveToIdle_IT(&huart2, buffer, 3);
+	if (status != HAL_OK || (huart2.Instance->ISR & (1 << 3))) {
+		uartError = true;
+	} else {
+		uartError = false;
+	}
 }
 
 /* USER CODE END 0 */
@@ -300,7 +312,7 @@ int main(void) {
 		control = (uint8_t) *(__IO uint32_t*) (FLASH_START_ADDR + 0x4);
 	}
 
-	HAL_UARTEx_ReceiveToIdle_IT(&huart2, midiMessageReceived(), 3);
+	startUartInterrupts(midiGetCurrentBuffer());
 
 	/* USER CODE END 2 */
 
@@ -310,6 +322,10 @@ int main(void) {
 	while (1) {
 		readSwitches();
 		updateState();
+
+		if (uartError || (huart2.Instance->ISR & (1 << 3))) {
+			startUartInterrupts(midiGetCurrentBuffer());
+		}
 
 		HAL_GPIO_WritePin(GPIOB, Relay_Pin,
 				effectOn & !midiLearn ? GPIO_PIN_SET : GPIO_PIN_RESET);
@@ -473,7 +489,8 @@ static void MX_GPIO_Init(void) {
 /* USER CODE BEGIN 4 */
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size) {
-	HAL_UARTEx_ReceiveToIdle_IT(&huart2, midiMessageReceived(), 3); //You need to toggle a breakpoint on this line!
+	uint8_t* buffer = midiMessageReceived();
+	startUartInterrupts(buffer);
 }
 
 /* USER CODE END 4 */

@@ -7,6 +7,7 @@
  * @attention
  *
  * Copyright (c) 2025 STMicroelectronics.
+ * Copyright (c) Roland Müller: roland.mueller.1994@gmx.de
  * All rights reserved.
  *
  * This software is licensed under terms that can be found in the LICENSE file
@@ -108,6 +109,19 @@ static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN 0 */
 
 void readSwitches() {
+	/*
+	 * This function reads and traces the state of the external switches and implements debouncing.
+	 *
+	 * Debounce time: LOOP_DELAY * DEBOUNCE_DELAY
+	 * Long press time: LOOP_DELAY * (DEBOUNCE_DELAY + LONG_DELAY)
+	 *
+	 * Current state of the switches is stored in swStates
+	 * Edge detection is stored in swEdgesPush and swEdgesRelease
+	 * Long pressed switch states for momentary switches (swLatches[i] == false) is stored in swLongState.
+	 * Release of long pressed switches is stored in swLongRelease
+	 *
+	 * swEdgesPush, swEdgesRelease and swLongRelease are cleared at each call of this function.
+	 */
 
 	for (int i = 0; i < NO_SWITCHES; i++) {
 		GPIO_PinState pinState = HAL_GPIO_ReadPin(switchBank[i], switches[i]);
@@ -116,13 +130,19 @@ void readSwitches() {
 		swEdgesRelease[i] = false;
 		swLongRelease[i] = false;
 
-		// Switches are active low
+		/*
+		 * Debouncing starts once the GPIO state is uneqaul to the state traced in swStates.
+		 * This is done such that both edges can be detected
+		 * Switches are low active
+		 */
 		if (pinState == GPIO_PIN_SET && swStates[i]) {
 			// Switch open
 			if (!swDoCount[i]) {
 				// Start debounce
 				swDoCount[i] = true;
 			} else {
+				/* If we are in debouncing state, we will count till DEBOUNCE_DELAY is reached.
+				 * Afterwards, we will set the edge flag and in the next call we will set the state */
 				if (swCount[i] == DEBOUNCE_DELAY) {
 					swEdgesRelease[i] = true;
 					swCount[i]++;
@@ -140,6 +160,8 @@ void readSwitches() {
 				// Start debounce
 				swDoCount[i] = true;
 			} else {
+				/* If we are in debouncing state, we will count till DEBOUNCE_DELAY is reached.
+				 * Afterwards, we will set the edge flag and in the next call we will set the state */
 				if (swCount[i] == DEBOUNCE_DELAY) {
 					swEdgesPush[i] = true;
 					swCount[i]++;
@@ -156,6 +178,7 @@ void readSwitches() {
 			swCount[i] = 0;
 		}
 
+		/* Once the state of a momentary switch is pressed, we will start counting for long press detection */
 		if (swStates[i] && !swLatches[i]) {
 			if (swLongCount[i] < LONG_DELAY) {
 				swLongCount[i]++;
@@ -174,6 +197,12 @@ void readSwitches() {
 }
 
 void updateState() {
+	/*
+	 * This function checks the switch states and update the effects on flag accordingly.
+	 * Further, we check if we should get into midi learn once main switch is pressed long enough
+	 * and the input jack is not connected.
+	 */
+
 	bool swLong = false;
 	bool swPushEdge = false;
 	bool inConn = false;
@@ -184,7 +213,7 @@ void updateState() {
 			swPushEdge = true;
 		} else if ((switches[i] == SW_Pin) && swLongRelease[i] && effectOn) {
 			if (!midiLearn)
-			effectOn = false;
+				effectOn = false;
 		} else if (switches[i] == ExtSW_Pin && !effectOn) {
 			if (swEdgesPush[i])
 				effectOn = true;
@@ -209,6 +238,10 @@ void updateState() {
 }
 
 void saveChannelControlFlash(uint8_t channel, uint8_t control) {
+	/*
+	 * Write current channel and controller number to flash after midi learn.
+	 */
+
 	HAL_FLASH_Unlock();
 	FLASH_EraseInitTypeDef EraseInitStruct;
 	EraseInitStruct.TypeErase = FLASH_TYPEERASE_PAGES;
@@ -231,7 +264,7 @@ void saveChannelControlFlash(uint8_t channel, uint8_t control) {
 	HAL_FLASH_Lock();
 }
 
-void startUartInterrupts(uint8_t* buffer) {
+void startUartInterrupts(uint8_t *buffer) {
 	HAL_StatusTypeDef status = HAL_UARTEx_ReceiveToIdle_IT(&huart2, buffer, 3);
 	if (status != HAL_OK || (huart2.Instance->ISR & (1 << 3))) {
 		uartError = true;
@@ -266,6 +299,7 @@ int main(void) {
 
 	/* USER CODE BEGIN SysInit */
 
+	// Reset switch arrays
 	for (int i = 0; i < NO_SWITCHES; i++) {
 		swEdgesPush[i] = false;
 		swEdgesRelease[i] = false;
@@ -277,6 +311,7 @@ int main(void) {
 		swDoCount[i] = false;
 	}
 
+	// Initialize midi ring buffer
 	midiInit();
 
 	/* USER CODE END SysInit */
@@ -288,6 +323,8 @@ int main(void) {
 
 	bool reset = true;
 
+
+	// Check if main switch is pressed at startup. If yes, reset midi channel and controller.
 	for (int i = 0; i < 20; i++) {
 		if (HAL_GPIO_ReadPin(GPIOA, SW_Pin) == GPIO_PIN_SET) {
 			reset = false;
@@ -300,7 +337,8 @@ int main(void) {
 	if (reset) {
 		saveChannelControlFlash(MIDI_CHANNEL, MIDI_CONTROL);
 		uint16_t blinkCount = 0;
-		for (uint8_t i = 0; i < 4; ) {
+		// Let LED blink to tell user about the reset.
+		for (uint8_t i = 0; i < 4;) {
 			HAL_GPIO_WritePin(GPIOB, LED_Pin,
 					blinkCount % 2 == 0 ? GPIO_PIN_SET : GPIO_PIN_RESET);
 			HAL_Delay(250);
@@ -312,6 +350,7 @@ int main(void) {
 		channel = MIDI_CHANNEL;
 		control = MIDI_CONTROL;
 	} else {
+		// Read stored midi controller and channel from flash
 		channel = (uint8_t) *(__IO uint32_t*) FLASH_START_ADDR;
 		control = (uint8_t) *(__IO uint32_t*) (FLASH_START_ADDR + 0x4);
 	}
@@ -327,23 +366,29 @@ int main(void) {
 		readSwitches();
 		updateState();
 
+		// Periodic UART error and overrun check. In case error or overrun was detected, restart the interrupt.
 		if (uartError || (huart2.Instance->ISR & (1 << 3))) {
 			startUartInterrupts(midiGetCurrentBuffer());
 		}
 
+		// Effect on or off
 		HAL_GPIO_WritePin(GPIOB, Relay_Pin,
 				effectOn & !midiLearn ? GPIO_PIN_SET : GPIO_PIN_RESET);
+
+		// LED blink in case of midi learn or just display on/off state
 		if (midiLearn && loopCount == (500 / LOOP_DELAY)) {
 			HAL_GPIO_TogglePin(GPIOB, LED_Pin);
 			loopCount = 0;
-		} else if (!midiLearn){
+		} else if (!midiLearn) {
 			HAL_GPIO_WritePin(GPIOB, LED_Pin,
 					effectOn ? GPIO_PIN_SET : GPIO_PIN_RESET);
 		}
 
 		do {
+			// Check if there are any new midi messages.
 			midiGetMessage(&msg);
 			if (midiLearn) {
+				// If we are in midi learn state, check the latest message and store its channel and controller if it was a CC message
 				loopCount += 1;
 				if (msg.msgType == MIDI_CC) {
 					channel = msg.channel;
@@ -353,6 +398,7 @@ int main(void) {
 					loopCount = 0;
 				}
 			} else if (msg.msgType == MIDI_CC) {
+				// Switch effect on or off
 				if (msg.channel == channel && msg.val1 == control)
 					effectOn = msg.val2 > 63;
 			}
@@ -494,7 +540,7 @@ static void MX_GPIO_Init(void) {
 /* USER CODE BEGIN 4 */
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size) {
-	uint8_t* buffer = midiMessageReceived();
+	uint8_t *buffer = midiMessageReceived();
 	startUartInterrupts(buffer);
 }
 
